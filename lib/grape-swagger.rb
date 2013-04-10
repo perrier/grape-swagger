@@ -102,19 +102,70 @@ module Grape
                   :operations => [operations]
                 }
               end
-
               {
                 apiVersion: api_version,
                 swaggerVersion: "1.1",
                 basePath: base_path || request.base_url,
                 resourcePath: "",
-                apis: routes_array
+                apis: routes_array,
+                models: parse_models(routes)
               }
             end
           end
 
 
           helpers do
+            def parse_models(routes)
+              models = Hash.new
+              routes_array = routes.map do |route|
+                route.route_params.map do |param, value|
+                  add_model(value[:type], models)
+                end
+              end
+              return models
+            end
+
+            def add_model( type, models )
+              class_symbol = type.classify.safe_constantize
+              demodularized_type = type.demodulize
+
+              # check if type is a class 
+              if !class_symbol && !models.has_key?(demodularized_type)
+                return class_symbol
+              end
+              
+              # auto-detect the entity from class
+              entity_class ||= class_symbol.const_get(:Entity) if class_symbol.const_defined?(:Entity)
+
+              if entity_class
+                # create swagger models structure
+                models[demodularized_type] = Hash.new
+                models[demodularized_type][:id] = demodularized_type
+                models[demodularized_type][:properties] = Hash.new
+
+                entity_class.documentation.map do |exposure, documentation|
+                  if documentation[:type].downcase.index('array') != nil
+                    # check if inner type class is found in path
+                    inner_type = documentation[:type][/\[(.*?)\]/m, 1]
+                    inner_class_symbol = inner_type.classify.safe_constantize
+                    demodularized_inner_type = inner_type.demodulize
+
+                    if inner_class_symbol
+                      # Array of objects
+                      models[demodularized_type][:properties][exposure] = { :items => { '$ref' => demodularized_inner_type }, :type => 'Array'}
+                      add_model(inner_type, models)
+                    else
+                      # Array with elements of basic type or class not found
+                      models[demodularized_type][:properties][exposure] = { :items => { :type => demodularized_inner_type }, :type => 'Array'}
+                    end
+                  else
+                    # basic type
+                    models[demodularized_type][:properties][exposure] = { :type => documentation[:type] }
+                  end
+                end
+              end
+            end
+
             def parse_params(params, path, method)
               if params
                 params.map do |param, value|
@@ -123,7 +174,7 @@ module Grape
                   dataType = value.is_a?(Hash) ? value[:type]||'String' : 'String'
                   description = value.is_a?(Hash) ? value[:desc] : ''
                   required = value.is_a?(Hash) ? !!value[:required] : false
-                  paramType = path.match(":#{param}") ? 'path' : (method == 'POST') ? 'body' : 'query'
+                  paramType = path.match(":#{param}") ? 'path' : (method == 'POST' || method == 'PUT') ? 'body' : 'query'
                   name = (value.is_a?(Hash) && value[:full_name]) || param
                   {
                     paramType: paramType,
