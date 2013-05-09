@@ -159,8 +159,22 @@ module Grape
                       models[demodularized_type][:properties][exposure] = { :items => { :type => demodularized_inner_type }, :type => 'Array'}
                     end
                   else
-                    # basic type
-                    models[demodularized_type][:properties][exposure] = { :type => documentation[:type] }
+                  	inner_type = documentation[:type]
+                    inner_class_symbol = inner_type.classify.safe_constantize
+                    demodularized_inner_type = inner_type.demodulize
+
+                    if inner_class_symbol
+                    	# object type
+                    	models[demodularized_type][:properties][exposure] = { :type => demodularized_inner_type }
+                    	add_model(inner_type, models)
+                    else
+	                    # basic type
+	                    models[demodularized_type][:properties][exposure] = { :type => documentation[:type] }
+	                end
+                  end
+
+                  if documentation[:allowable_values].present?
+                  	models[demodularized_type][:properties][exposure].merge!( add_allowable_values( documentation[:allowable_values] ) ) 
                   end
                 end
               end
@@ -181,7 +195,7 @@ module Grape
                     name: name,
                     description: description,
                     dataType: dataType,
-                    required: required
+                    required: required 
                   }
                 end
               else
@@ -189,6 +203,13 @@ module Grape
               end
             end
 
+            def add_allowable_values(allowable_values)
+            	{ allowableValues: {
+	            		valueType: "LIST",
+	            		values: allowable_values
+	            	}
+	            }
+            end
 
             def parse_header_params(params)
               if params
